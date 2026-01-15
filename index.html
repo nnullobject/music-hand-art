@@ -21,32 +21,56 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
     <script id="vertexShader" type="x-shader/x-vertex">
-        uniform float uTime;
-        uniform float uAudioHigh;
-        uniform vec3 uHandPos;
-        attribute float aSize;
-        varying vec3 vColor;
+    uniform float uTime;
+    uniform float uAudioHigh;
+    uniform vec3 uHandPos;
+    attribute float aSize;
+    attribute vec3 position; // 原始位置
+    varying vec3 vColor;
 
-        void main() {
-            vec3 pos = position;
-            
-            // 基礎混沌擾動 (Lorenz-like turbulence)
-            float dist = distance(pos, uHandPos);
-            float force = 1.0 / (dist + 0.5);
-            
-            // 手勢引力影響
-            pos += normalize(uHandPos - pos) * force * sin(uTime + dist);
-            
-            // 音頻高頻帶來的震動
-            pos.x += sin(uTime * 10.0 + pos.y) * uAudioHigh * 0.1;
+    // 這裡定義一個簡單的偽隨機函數
+    float hash(float n) { return fract(sin(n) * 43758.5453123); }
 
-            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-            gl_PointSize = aSize * (300.0 / -mvPosition.z) * (1.0 + uAudioHigh);
-            gl_Position = projectionMatrix * mvPosition;
-            
-            // 顏色隨距離與音頻變化
-            vColor = mix(vec3(0.1, 0.5, 1.0), vec3(1.0, 0.2, 0.5), uAudioHigh);
-        }
+    void main() {
+        // 1. 基礎參數計算
+        float idx = float(gl_VertexID);
+        float t = uTime * 0.2;
+        
+        // 2. 幾何變換：莫比烏斯環邏輯 (Mobius Strip Influence)
+        // 使用粒子索引來決定它在幾何體上的位置
+        float u = (idx / 50000.0) * 6.28318; // 0 到 2pi
+        float v = sin(t + u) * 1.5;
+        
+        vec3 targetPos;
+        targetPos.x = cos(u) * (2.0 + v * cos(u * 0.5));
+        targetPos.y = sin(u) * (2.0 + v * cos(u * 0.5));
+        targetPos.z = v * sin(u * 0.5);
+
+        // 3. 加入手勢干擾 (Gesture Interaction)
+        // 計算粒子到手部的距離
+        float dist = distance(targetPos, uHandPos);
+        float attraction = 1.0 / (dist * dist + 0.1);
+        
+        // 讓粒子在手部周圍產生「黑洞」般的扭曲感
+        vec3 dir = normalize(uHandPos - targetPos);
+        targetPos += dir * attraction * (uAudioHigh * 2.0 + 0.5);
+
+        // 4. 音頻震動 (Audio Reactivity)
+        // 根據高頻數值讓粒子產生微小的量子跳變
+        targetPos += vec3(hash(idx), hash(idx+1.0), hash(idx+2.0)) * uAudioHigh * 0.5;
+
+        // 5. 渲染輸出
+        vec4 mvPosition = modelViewMatrix * vec4(targetPos, 1.0);
+        
+        // 讓距離鏡頭越近的粒子越大，且隨音頻閃爍
+        gl_PointSize = aSize * (400.0 / -mvPosition.z) * (1.0 + uAudioHigh * 3.0);
+        gl_Position = projectionMatrix * mvPosition;
+        
+        // 顏色邏輯：根據高度與音頻強度改變
+        vColor = mix(vec3(0.0, 0.8, 1.0), vec3(1.0, 0.0, 0.5), (targetPos.z + 1.0) * 0.5);
+        vColor += uAudioHigh * 0.4; // 音頻越高，顏色越亮
+    }
+</script>
     </script>
 
     <script id="fragmentShader" type="x-shader/x-fragment">
