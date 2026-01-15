@@ -2,21 +2,23 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Gemini Nebula - Stardust Edition</title>
+    <title>Gemini Nebula - Morphing Logic</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
-        #ui { position: absolute; top: 30px; left: 30px; color: #fff; pointer-events: none; z-index: 10; opacity: 0.7; }
+        #ui { position: absolute; top: 30px; left: 30px; color: #fff; pointer-events: none; z-index: 10; }
         h1 { margin: 0; font-weight: 100; letter-spacing: 5px; font-size: 16px; color: #00f2ff; }
-        .status-box { background: rgba(0,0,0,0.4); padding: 10px; border-left: 2px solid #00f2ff; margin-top: 10px; }
+        .status-box { background: rgba(0,0,0,0.5); padding: 10px; border-left: 2px solid #00f2ff; margin-top: 10px; backdrop-filter: blur(5px); }
         p { margin: 3px 0; font-size: 11px; color: #00f2ff; }
+        .mode-indicator { font-weight: bold; color: #ffcc00; }
         canvas { display: block; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1>NEBULA / STARDUST V5</h1>
+        <h1>NEBULA / MODE SWITCH</h1>
         <div class="status-box">
-            <p>狀態：<span id="status">點擊螢幕啟動</span></p>
+            <p>模式：<span id="current-mode" class="mode-indicator">莫比烏斯環</span></p>
+            <p>狀態：<span id="status">點擊啟動 (比 1 向左揮切換)</span></p>
             <p>手勢：<span id="hand-gesture">尚未偵測</span></p>
         </div>
     </div>
@@ -29,63 +31,64 @@
         uniform float uTime;
         uniform float uAudioHigh;
         uniform vec3 uHandPos;
-        uniform float uFistStrength;
+        uniform float uMorph; // 0: 莫比烏斯環, 1: 螺旋球體
         attribute float aSize;
         attribute float aIndex;
         varying vec3 vColor;
-        varying float vAlpha;
 
         float hash(float n) { return fract(sin(n) * 43758.5453123); }
 
         void main() {
-            float u = (aIndex / 50000.0) * 6.28318;
-            float t = uTime * 0.15;
+            float i = aIndex;
+            float total = 50000.0;
             
-            // 擴大基礎幾何體，避免粒子擠在一起
-            float dynamicRadius = mix(8.0, 1.5, uFistStrength);
-            float dynamicWidth = mix(3.5, 0.8, uFistStrength);
-            
-            // 【關鍵優化】加入隨機擾動 (Jitter)，讓邊緣散開，找回粒子感
-            float jitter = hash(aIndex) * 1.5;
-            float v = (sin(t + u * 2.0) * dynamicWidth) + jitter;
+            // --- 模式 A: 莫比烏斯環 ---
+            float u = (i / total) * 6.28318;
+            float t = uTime * 0.2;
+            float v_mobius = sin(t + u * 2.0) * 2.5;
+            vec3 posA;
+            posA.x = cos(u) * (7.0 + v_mobius * cos(u * 0.5));
+            posA.y = sin(u) * (7.0 + v_mobius * cos(u * 0.5));
+            posA.z = v_mobius * sin(u * 0.5);
 
-            vec3 targetPos;
-            targetPos.x = cos(u) * (dynamicRadius + v * cos(u * 0.5));
-            targetPos.y = sin(u) * (dynamicRadius + v * cos(u * 0.5));
-            targetPos.z = v * sin(u * 0.5);
+            // --- 模式 B: 螺旋球體 (Spiral Sphere) ---
+            float phi = acos(1.0 - 2.0 * (i / total));
+            float theta = sqrt(total * 3.14159) * phi + t;
+            vec3 posB;
+            float r = 7.0;
+            posB.x = r * cos(theta) * sin(phi);
+            posB.y = r * sin(theta) * sin(phi);
+            posB.z = r * cos(phi);
 
-            // 手勢引力
-            float dist = distance(targetPos, uHandPos);
-            float influence = smoothstep(10.0, 0.0, dist) * (uFistStrength * 0.7 + 0.3);
-            vec3 finalPos = mix(targetPos, uHandPos, influence * 0.8);
+            // --- 混合與交互 ---
+            vec3 basePos = mix(posA, posB, uMorph);
             
-            // 音頻炸裂感
-            finalPos += normalize(finalPos) * uAudioHigh * hash(aIndex + 7.0) * 4.0;
+            // 加入隨機粒子感
+            basePos += (hash(i) - 0.5) * 1.5;
+
+            float dist = distance(basePos, uHandPos);
+            float influence = smoothstep(8.0, 0.0, dist);
+            vec3 finalPos = mix(basePos, uHandPos, influence * 0.7);
+            
+            // 音頻炸裂
+            finalPos += normalize(finalPos) * uAudioHigh * hash(i + 5.0) * 4.0;
 
             vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
-            
-            // 【關鍵優化】極大幅度縮小點的大小 (從 400 降到 60.0)
-            gl_PointSize = aSize * (65.0 / -mvPosition.z) * (1.0 + uAudioHigh * 2.0);
+            gl_PointSize = aSize * (80.0 / -mvPosition.z) * (1.0 + uAudioHigh * 2.0);
             gl_Position = projectionMatrix * mvPosition;
             
-            // 顏色變換
-            vColor = mix(vec3(0.0, 0.3, 1.0), vec3(1.0, 0.1, 0.5), (finalPos.z + 5.0) / 10.0);
+            vColor = mix(vec3(0.1, 0.5, 1.0), vec3(1.0, 0.3, 0.1), uMorph);
             vColor += uAudioHigh * 0.4;
-            
-            // 【關鍵優化】大幅降低基礎透明度，避免重疊過曝
-            vAlpha = 0.2 + (uAudioHigh * 0.3); 
         }
     </script>
 
     <script id="fragmentShader" type="x-shader/x-fragment">
         varying vec3 vColor;
-        varying float vAlpha;
         void main() {
             float dist = length(gl_PointCoord - vec2(0.5));
-            // 讓中心最亮，向外極速衰減，形成銳利的小點
-            float strength = exp(-dist * 10.0); 
+            float strength = exp(-dist * 10.0);
             if (dist > 0.5) discard;
-            gl_FragColor = vec4(vColor, strength * vAlpha);
+            gl_FragColor = vec4(vColor, strength * 0.6);
         }
     </script>
 
@@ -93,7 +96,12 @@
         let scene, camera, renderer, particles;
         let audioAnalyser, dataArray;
         const handPos = new THREE.Vector3(100, 100, 100);
-        let fistStrength = 0;
+        
+        // 切換控制變數
+        let morphTarget = 0; // 0 or 1
+        let currentMorph = 0;
+        let lastHandX = 0;
+        let gestureCooldown = false;
 
         async function init() {
             scene = new THREE.Scene();
@@ -102,7 +110,6 @@
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setClearColor(0x000000, 1);
             document.body.appendChild(renderer.domElement);
 
@@ -110,10 +117,7 @@
             const geometry = new THREE.BufferGeometry();
             const indices = new Float32Array(count);
             const sizes = new Float32Array(count);
-            for(let i=0; i<count; i++) { 
-                indices[i]=i; 
-                sizes[i]=Math.random() * 0.8 + 0.2; // 讓大小更隨機
-            }
+            for(let i=0; i<count; i++) { indices[i]=i; sizes[i]=Math.random()*1.0+0.5; }
             geometry.setAttribute('aIndex', new THREE.BufferAttribute(indices, 1));
             geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
             geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count*3), 3));
@@ -123,7 +127,7 @@
                     uTime: { value: 0 },
                     uAudioHigh: { value: 0 },
                     uHandPos: { value: handPos },
-                    uFistStrength: { value: 0 }
+                    uMorph: { value: 0 }
                 },
                 vertexShader: document.getElementById('vertexShader').textContent,
                 fragmentShader: document.getElementById('fragmentShader').textContent,
@@ -134,7 +138,7 @@
             scene.add(particles);
 
             const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5 });
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
             hands.onResults(onHandResults);
 
             const videoElement = document.createElement('video');
@@ -149,58 +153,74 @@
         }
 
         function onHandResults(results) {
-            const statusEl = document.getElementById('hand-gesture');
+            const gestureEl = document.getElementById('hand-gesture');
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                const palm = landmarks[9];
-                handPos.x = (palm.x - 0.5) * -35;
-                handPos.y = (0.5 - palm.y) * 25;
-                handPos.z = palm.z * -25;
-
-                const fingerTips = [8, 12, 16, 20];
-                let avgDist = 0;
-                fingerTips.forEach(idx => {
-                    const dx = landmarks[idx].x - landmarks[9].x;
-                    const dy = landmarks[idx].y - landmarks[9].y;
-                    avgDist += Math.sqrt(dx*dx + dy*dy);
-                });
-                avgDist /= 4;
-
-                const targetFist = avgDist < 0.13 ? 1.0 : 0.0;
-                fistStrength += (targetFist - fistStrength) * 0.15; // 加快反應速度
+                const lm = results.multiHandLandmarks[0];
                 
-                statusEl.innerText = avgDist < 0.13 ? "✊ 握拳" : "✋ 開掌";
-            } else {
-                handPos.lerp(new THREE.Vector3(100,100,100), 0.05);
+                // 1. 更新位置
+                const palm = lm[9];
+                const currentX = palm.x;
+                handPos.x = (currentX - 0.5) * -35;
+                handPos.y = (0.5 - palm.y) * 25;
+
+                // 2. 辨識「1」(食指伸出，其他握緊)
+                const isIndexExtended = lm[8].y < lm[6].y;
+                const isMiddleCurled = lm[12].y > lm[10].y;
+                const isRingCurled = lm[16].y > lm[14].y;
+                const isPinkyCurled = lm[20].y > lm[18].y;
+                const isFingerOne = isIndexExtended && isMiddleCurled && isRingCurled && isPinkyCurled;
+
+                // 3. 偵測向左揮動 (X 座標減少)
+                if (isFingerOne && !gestureCooldown) {
+                    gestureEl.innerText = "☝️ 偵測到手勢 1";
+                    // 如果短時間內水平移動超過閾值
+                    if (lastHandX - currentX > 0.15) { 
+                        triggerMorph();
+                    }
+                } else {
+                    gestureEl.innerText = "等待手勢...";
+                }
+                
+                lastHandX = currentX;
             }
+        }
+
+        function triggerMorph() {
+            morphTarget = 1 - morphTarget; // 切換 0 或 1
+            gestureCooldown = true;
+            document.getElementById('current-mode').innerText = morphTarget === 1 ? "螺旋球體" : "莫比烏斯環";
+            
+            // 2 秒冷卻時間，防止連續切換
+            setTimeout(() => { gestureCooldown = false; }, 2000);
         }
 
         async function initAudio() {
             if (audioAnalyser) return;
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                const audioCtx = new AudioContext();
-                const source = audioCtx.createMediaStreamSource(stream);
-                audioAnalyser = audioCtx.createAnalyser();
-                audioAnalyser.fftSize = 128;
-                source.connect(audioAnalyser);
-                dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
-                document.getElementById('status').innerText = '捕捉音樂中...';
-            } catch (e) { console.error(e); }
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const audioCtx = new AudioContext();
+            const source = audioCtx.createMediaStreamSource(stream);
+            audioAnalyser = audioCtx.createAnalyser();
+            audioAnalyser.fftSize = 64;
+            source.connect(audioAnalyser);
+            dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+            document.getElementById('status').innerText = '分析中...';
         }
 
         function animate() {
             requestAnimationFrame(animate);
             const time = performance.now() * 0.001;
             particles.material.uniforms.uTime.value = time;
-            particles.material.uniforms.uFistStrength.value = fistStrength;
+
+            // 平滑過渡 Morph 數值 (Lerp)
+            currentMorph += (morphTarget - currentMorph) * 0.05;
+            particles.material.uniforms.uMorph.value = currentMorph;
 
             if (audioAnalyser) {
                 audioAnalyser.getByteFrequencyData(dataArray);
-                particles.material.uniforms.uAudioHigh.value = dataArray[20] / 255.0;
+                particles.material.uniforms.uAudioHigh.value = dataArray[10] / 255.0;
             }
 
-            particles.rotation.y = time * 0.03;
+            particles.rotation.y = time * 0.05;
             renderer.render(scene, camera);
         }
 
