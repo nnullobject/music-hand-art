@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Gemini 手勢音樂粒子系統</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; font-family: sans-serif; pointer-events: none; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1>Gemini Music Visualizer</h1>
+        <p>狀態：<span id="status">初始化中...</span></p>
+        <p>手勢中心：<span id="hand-pos">等待偵測</span></p>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script id="vertexShader" type="x-shader/x-vertex">
+        uniform float uTime;
+        uniform float uAudioHigh;
+        uniform vec3 uHandPos;
+        attribute float aSize;
+        varying vec3 vColor;
+
+        void main() {
+            vec3 pos = position;
+            
+            // 基礎混沌擾動 (Lorenz-like turbulence)
+            float dist = distance(pos, uHandPos);
+            float force = 1.0 / (dist + 0.5);
+            
+            // 手勢引力影響
+            pos += normalize(uHandPos - pos) * force * sin(uTime + dist);
+            
+            // 音頻高頻帶來的震動
+            pos.x += sin(uTime * 10.0 + pos.y) * uAudioHigh * 0.1;
+
+            vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+            gl_PointSize = aSize * (300.0 / -mvPosition.z) * (1.0 + uAudioHigh);
+            gl_Position = projectionMatrix * mvPosition;
+            
+            // 顏色隨距離與音頻變化
+            vColor = mix(vec3(0.1, 0.5, 1.0), vec3(1.0, 0.2, 0.5), uAudioHigh);
+        }
+    </script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        varying vec3 vColor;
+        void main() {
+            float r = distance(gl_PointCoord, vec2(0.5));
+            if (r > 0.5) discard;
+            float strength = 1.0 - (r * 2.0);
+            gl_FragColor = vec4(vColor, strength);
+        }
+    </script>
+
+    <script>
+        // --- 初始化變數 ---
+        let scene, camera, renderer, particles;
+        let audioAnalyser, dataArray;
+        const handPos = new THREE.Vector3(0, 0, 0);
+
+        async function init() {
+            // 1. Three.js 場景設置
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 2. 創建粒子系統 (50,000 個粒子)
+            const geometry = new THREE.BufferGeometry();
+            const count = 50000;
+            const positions = new Float32Array(count * 3);
+            const sizes = new Float32Array(count);
+
+            for (let i = 0; i < count * 3; i++) {
+                positions[i] = (Math.random() - 0.5) * 10;
+            }
+            for (let i = 0; i < count; i++) {
+                sizes[i] = Math.random() * 2.0;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uAudioHigh: { value: 0 },
+                    uHandPos: { value: handPos }
+                },
+                vertexShader: document.getElementById('vertexShader').textContent,
+                fragmentShader: document.getElementById('fragmentShader').textContent,
+                transparent: true,
+                blending: THREE.AdditiveBlending
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+
+            // 3. MediaPipe 手勢初始化
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5 });
+            hands.onResults(onHandResults);
+
+            const videoElement = document.createElement('video');
+            const cameraUtils = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: 1280, height: 720
+            });
+            cameraUtils.start();
+
+            // 4. 音頻初始化 (需用戶點擊啟動)
+            window.onclick = initAudio;
+            document.getElementById('status').innerText = '點擊畫面以啟動音頻分析';
+            
+            animate();
+        }
+
+        function onHandResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmark = results.multiHandLandmarks[0][8]; // 食指尖
+                // 座標轉換: MediaPipe (0~1) -> Three.js (-5~5)
+                handPos.x = (landmark.x - 0.5) * -10;
+                handPos.y = (0.5 - landmark.y) * 10;
+                document.getElementById('hand-pos').innerText = `X: ${handPos.x.toFixed(2)} Y: ${handPos.y.toFixed(2)}`;
+            }
+        }
+
+        async function initAudio() {
+            if (audioAnalyser) return;
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const audioCtx = new AudioContext();
+            const source = audioCtx.createMediaStreamSource(stream);
+            audioAnalyser = audioCtx.createAnalyser();
+            audioAnalyser.fftSize = 256;
+            source.connect(audioAnalyser);
+            dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+            document.getElementById('status').innerText = '音頻與手勢已就緒';
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = performance.now() * 0.001;
+            particles.material.uniforms.uTime.value = time;
+
+            if (audioAnalyser) {
+                audioAnalyser.getByteFrequencyData(dataArray);
+                const highFreq = dataArray[20] / 255.0; // 提取特定頻段
+                particles.material.uniforms.uAudioHigh.value = highFreq;
+            }
+
+            particles.rotation.y = time * 0.05; // 場景緩緩旋轉
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
