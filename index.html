@@ -2,18 +2,22 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Gemini 手勢音樂粒子系統</title>
+    <title>Gemini Music Visualizer - Fixed</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; font-family: sans-serif; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+        #ui { position: absolute; top: 30px; left: 30px; color: #fff; pointer-events: none; text-shadow: 0 0 10px rgba(0,0,0,0.8); }
+        h1 { margin: 0; font-weight: 300; letter-spacing: 2px; color: #00d4ff; }
+        .status-box { background: rgba(255,255,255,0.1); padding: 10px 15px; border-radius: 5px; margin-top: 10px; backdrop-filter: blur(5px); }
         canvas { display: block; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1>Gemini Music Visualizer</h1>
-        <p>狀態：<span id="status">初始化中...</span></p>
-        <p>手勢中心：<span id="hand-pos">等待偵測</span></p>
+        <h1>GEMINI NEBULA</h1>
+        <div class="status-box">
+            <p>狀態：<span id="status">點擊畫面以啟動音頻分析</span></p>
+            <p>手勢中心：<span id="hand-pos">等待偵測</span></p>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.min.js"></script>
@@ -21,56 +25,41 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
     <script id="vertexShader" type="x-shader/x-vertex">
-    uniform float uTime;
-    uniform float uAudioHigh;
-    uniform vec3 uHandPos;
-    attribute float aSize;
-    attribute vec3 position; // 原始位置
-    varying vec3 vColor;
+        uniform float uTime;
+        uniform float uAudioHigh;
+        uniform vec3 uHandPos;
+        attribute float aSize;
+        attribute float aIndex; // 傳入粒子編號以計算幾何形狀
+        varying vec3 vColor;
 
-    // 這裡定義一個簡單的偽隨機函數
-    float hash(float n) { return fract(sin(n) * 43758.5453123); }
+        void main() {
+            // 1. 莫比烏斯環基礎數學公式
+            float u = (aIndex / 50000.0) * 6.28318; 
+            float t = uTime * 0.3;
+            float v = sin(t + u * 2.0) * 1.2;
+            
+            vec3 targetPos;
+            targetPos.x = cos(u) * (3.0 + v * cos(u * 0.5));
+            targetPos.y = sin(u) * (3.0 + v * cos(u * 0.5));
+            targetPos.z = v * sin(u * 0.5);
 
-    void main() {
-        // 1. 基礎參數計算
-        float idx = float(gl_VertexID);
-        float t = uTime * 0.2;
-        
-        // 2. 幾何變換：莫比烏斯環邏輯 (Mobius Strip Influence)
-        // 使用粒子索引來決定它在幾何體上的位置
-        float u = (idx / 50000.0) * 6.28318; // 0 到 2pi
-        float v = sin(t + u) * 1.5;
-        
-        vec3 targetPos;
-        targetPos.x = cos(u) * (2.0 + v * cos(u * 0.5));
-        targetPos.y = sin(u) * (2.0 + v * cos(u * 0.5));
-        targetPos.z = v * sin(u * 0.5);
+            // 2. 交互邏輯：計算與手部引力
+            float dist = distance(targetPos, uHandPos);
+            float attraction = 1.2 / (dist + 0.8);
+            vec3 dir = normalize(uHandPos - targetPos);
+            
+            // 隨音頻爆發的效果
+            vec3 finalPos = targetPos + dir * attraction * (uAudioHigh * 4.0 + 0.2);
 
-        // 3. 加入手勢干擾 (Gesture Interaction)
-        // 計算粒子到手部的距離
-        float dist = distance(targetPos, uHandPos);
-        float attraction = 1.0 / (dist * dist + 0.1);
-        
-        // 讓粒子在手部周圍產生「黑洞」般的扭曲感
-        vec3 dir = normalize(uHandPos - targetPos);
-        targetPos += dir * attraction * (uAudioHigh * 2.0 + 0.5);
-
-        // 4. 音頻震動 (Audio Reactivity)
-        // 根據高頻數值讓粒子產生微小的量子跳變
-        targetPos += vec3(hash(idx), hash(idx+1.0), hash(idx+2.0)) * uAudioHigh * 0.5;
-
-        // 5. 渲染輸出
-        vec4 mvPosition = modelViewMatrix * vec4(targetPos, 1.0);
-        
-        // 讓距離鏡頭越近的粒子越大，且隨音頻閃爍
-        gl_PointSize = aSize * (400.0 / -mvPosition.z) * (1.0 + uAudioHigh * 3.0);
-        gl_Position = projectionMatrix * mvPosition;
-        
-        // 顏色邏輯：根據高度與音頻強度改變
-        vColor = mix(vec3(0.0, 0.8, 1.0), vec3(1.0, 0.0, 0.5), (targetPos.z + 1.0) * 0.5);
-        vColor += uAudioHigh * 0.4; // 音頻越高，顏色越亮
-    }
-</script>
+            // 3. 渲染設置
+            vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
+            gl_PointSize = aSize * (500.0 / -mvPosition.z) * (1.0 + uAudioHigh * 2.0);
+            gl_Position = projectionMatrix * mvPosition;
+            
+            // 4. 顏色映射：隨深度與節奏變幻
+            vColor = mix(vec3(0.0, 0.4, 1.0), vec3(1.0, 0.0, 0.6), (targetPos.z + 1.5) / 3.0);
+            vColor += uAudioHigh * 0.5; 
+        }
     </script>
 
     <script id="fragmentShader" type="x-shader/x-fragment">
@@ -78,42 +67,40 @@
         void main() {
             float r = distance(gl_PointCoord, vec2(0.5));
             if (r > 0.5) discard;
-            float strength = 1.0 - (r * 2.0);
+            float strength = pow(1.0 - (r * 2.0), 2.0); // 讓粒子邊緣更柔和
             gl_FragColor = vec4(vColor, strength);
         }
     </script>
 
     <script>
-        // --- 初始化變數 ---
         let scene, camera, renderer, particles;
         let audioAnalyser, dataArray;
-        const handPos = new THREE.Vector3(0, 0, 0);
+        const handPos = new THREE.Vector3(100, 100, 100); // 初始藏在鏡頭外
 
         async function init() {
-            // 1. Three.js 場景設置
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 5;
+            camera.position.z = 8;
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            // 2. 創建粒子系統 (50,000 個粒子)
-            const geometry = new THREE.BufferGeometry();
             const count = 50000;
+            const geometry = new THREE.BufferGeometry();
             const positions = new Float32Array(count * 3);
             const sizes = new Float32Array(count);
+            const indices = new Float32Array(count);
 
-            for (let i = 0; i < count * 3; i++) {
-                positions[i] = (Math.random() - 0.5) * 10;
-            }
             for (let i = 0; i < count; i++) {
-                sizes[i] = Math.random() * 2.0;
+                indices[i] = i;
+                sizes[i] = Math.random() * 1.5 + 0.5;
             }
 
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+            geometry.setAttribute('aIndex', new THREE.BufferAttribute(indices, 1));
 
             const material = new THREE.ShaderMaterial({
                 uniforms: {
@@ -124,17 +111,17 @@
                 vertexShader: document.getElementById('vertexShader').textContent,
                 fragmentShader: document.getElementById('fragmentShader').textContent,
                 transparent: true,
-                blending: THREE.AdditiveBlending
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
             });
 
             particles = new THREE.Points(geometry, material);
             scene.add(particles);
 
-            // 3. MediaPipe 手勢初始化
             const hands = new Hands({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
-            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5 });
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6 });
             hands.onResults(onHandResults);
 
             const videoElement = document.createElement('video');
@@ -144,33 +131,44 @@
             });
             cameraUtils.start();
 
-            // 4. 音頻初始化 (需用戶點擊啟動)
+            window.addEventListener('resize', onWindowResize);
             window.onclick = initAudio;
-            document.getElementById('status').innerText = '點擊畫面以啟動音頻分析';
             
             animate();
         }
 
         function onHandResults(results) {
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmark = results.multiHandLandmarks[0][8]; // 食指尖
-                // 座標轉換: MediaPipe (0~1) -> Three.js (-5~5)
-                handPos.x = (landmark.x - 0.5) * -10;
-                handPos.y = (0.5 - landmark.y) * 10;
-                document.getElementById('hand-pos').innerText = `X: ${handPos.x.toFixed(2)} Y: ${handPos.y.toFixed(2)}`;
+                const landmark = results.multiHandLandmarks[0][8]; 
+                handPos.x = (landmark.x - 0.5) * -15;
+                handPos.y = (0.5 - landmark.y) * 15;
+                handPos.z = (landmark.z) * -10;
+                document.getElementById('hand-pos').innerText = `已偵測手勢`;
+            } else {
+                handPos.set(100, 100, 100); // 沒偵測到時移開
             }
         }
 
         async function initAudio() {
             if (audioAnalyser) return;
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const audioCtx = new AudioContext();
-            const source = audioCtx.createMediaStreamSource(stream);
-            audioAnalyser = audioCtx.createAnalyser();
-            audioAnalyser.fftSize = 256;
-            source.connect(audioAnalyser);
-            dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
-            document.getElementById('status').innerText = '音頻與手勢已就緒';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const audioCtx = new AudioContext();
+                const source = audioCtx.createMediaStreamSource(stream);
+                audioAnalyser = audioCtx.createAnalyser();
+                audioAnalyser.fftSize = 256;
+                source.connect(audioAnalyser);
+                dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+                document.getElementById('status').innerText = '音樂捕捉中...';
+            } catch (e) {
+                alert("請允許麥克風權限以進行音樂視覺化");
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
         function animate() {
@@ -180,11 +178,10 @@
 
             if (audioAnalyser) {
                 audioAnalyser.getByteFrequencyData(dataArray);
-                const highFreq = dataArray[20] / 255.0; // 提取特定頻段
-                particles.material.uniforms.uAudioHigh.value = highFreq;
+                particles.material.uniforms.uAudioHigh.value = dataArray[10] / 255.0;
             }
 
-            particles.rotation.y = time * 0.05; // 場景緩緩旋轉
+            particles.rotation.y = time * 0.1;
             renderer.render(scene, camera);
         }
 
