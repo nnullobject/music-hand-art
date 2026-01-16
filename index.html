@@ -206,8 +206,8 @@
                 
                 document.getElementById('energy-level').innerText = (normalizedEnergy * 100).toFixed(0) + "%";
 
-                // 如果能量超過 0.55 (代表副歌/大音量部分)
-                if (normalizedEnergy > 0.55) {
+                // 如果能量超過 0.20 (代表副歌/大音量部分)
+                if (normalizedEnergy > 0.20) {
                     chorusTarget = 1.0;
                     document.getElementById('chorus-active').style.display = "block";
                 } else {
