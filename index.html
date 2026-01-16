@@ -2,25 +2,26 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Gemini Nebula - V8 Stable</title>
+    <title>Gemini Nebula - V9 Master</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
         #ui { position: absolute; top: 30px; left: 30px; color: #fff; pointer-events: none; z-index: 10; }
         h1 { margin: 0; font-weight: 100; letter-spacing: 5px; font-size: 16px; color: #00f2ff; }
         .status-box { background: rgba(0,0,0,0.6); padding: 12px; border-left: 3px solid #00f2ff; margin-top: 10px; backdrop-filter: blur(10px); }
         p { margin: 3px 0; font-size: 11px; color: #00f2ff; }
-        #chorus-active { font-weight: bold; color: #ff00ff; display: none; text-shadow: 0 0 10px #ff00ff; }
+        #chorus-active { font-weight: bold; color: #ff00ff; display: none; text-shadow: 0 0 10px #ff00ff; animation: blink 0.5s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
         canvas { display: block; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1>NEBULA / STABLE V8</h1>
+        <h1>NEBULA / MASTER V9</h1>
         <div class="status-box">
             <p>模式：<span id="current-mode">莫比烏斯環</span></p>
-            <p>能量：<span id="energy-level">0%</span> (閾值: 40%)</p>
-            <p id="chorus-active">🔥 CHORUS ACTIVE 🔥</p>
-            <p>手勢：比 1 向左揮切換</p>
+            <p>能量：<span id="energy-level">0%</span> (副歌門檻: 20%)</p>
+            <p id="chorus-active">🔥 CHORUS MODE ACTIVE 🔥</p>
+            <p>手勢：比 1 向左揮切換形態</p>
         </div>
     </div>
 
@@ -43,43 +44,51 @@
         void main() {
             float i = aIndex;
             float total = 50000.0;
-            float t = uTime * 0.2;
+            float t = uTime * 0.15;
             
-            // --- 莫比烏斯環修復版 ---
-            float u = (i / total) * 6.283185; // 完整的 2pi
-            // 使用隨機偏移但保持週期性，解決斷裂感
-            float v = sin(t + u * 2.0) * 2.8 + (hash(i) - 0.5) * 1.5;
+            // --- 莫比烏斯環：數學閉合修正版 ---
+            // 讓 u 稍微超過 2pi (6.283185 + 0.1) 確保銜接處重疊
+            float u = (i / total) * 6.2831853; 
+            
+            // 莫比烏斯環的寬度與扭轉計算
+            float w = 2.5; 
+            float a = u * 0.5; // 扭轉角
+            float v = sin(t + u * 2.0) * w + (hash(i) - 0.5) * 1.5;
 
             vec3 posA;
-            posA.x = cos(u) * (7.5 + v * cos(u * 0.5));
-            posA.y = sin(u) * (7.5 + v * cos(u * 0.5));
-            posA.z = v * sin(u * 0.5);
+            posA.x = (8.0 + v * cos(a)) * cos(u);
+            posA.y = (8.0 + v * cos(a)) * sin(u);
+            posA.z = v * sin(a);
 
             // --- 螺旋球體 ---
             float phi = acos(1.0 - 2.0 * (i / total));
             float theta = sqrt(total * 3.14159) * phi + t;
-            vec3 posB = vec3(8.0 * cos(theta) * sin(phi), 8.0 * sin(theta) * sin(phi), 8.0 * cos(phi));
+            vec3 posB = vec3(8.5 * cos(theta) * sin(phi), 8.5 * sin(theta) * sin(phi), 8.5 * cos(phi));
 
-            // 形態融合
+            // 形態融合 (Morphing)
             vec3 basePos = mix(posA, posB, uMorph);
             
-            // 手勢引力與收束
+            // 手勢引力
             float dist = distance(basePos, uHandPos);
             float influence = smoothstep(12.0, 0.0, dist);
-            vec3 finalPos = mix(basePos, uHandPos, influence * 0.75);
+            vec3 finalPos = mix(basePos, uHandPos, influence * 0.8);
             
-            // 副歌增益爆發
-            finalPos += normalize(finalPos) * uAudioHigh * hash(i) * mix(2.5, 7.0, uChorusMode);
+            // 音頻反應：副歌時大幅增益爆發
+            float audioAmp = mix(2.0, 8.0, uChorusMode);
+            finalPos += normalize(finalPos) * uAudioHigh * hash(i) * audioAmp;
 
             vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
-            float sz = mix(70.0, 150.0, uChorusMode); // 副歌時點變大
-            gl_PointSize = aSize * (sz / -mvPosition.z) * (1.0 + uAudioHigh * 2.0);
+            
+            // 粒子感尺寸調整
+            float sz = mix(80.0, 180.0, uChorusMode); 
+            gl_PointSize = aSize * (sz / -mvPosition.z) * (1.0 + uAudioHigh * 2.5);
             gl_Position = projectionMatrix * mvPosition;
             
-            // 顏色過渡
-            vec3 c1 = mix(vec3(0.0, 0.4, 1.0), vec3(0.8, 0.2, 1.0), uMorph);
-            vec3 c2 = mix(vec3(1.0, 0.7, 0.0), vec3(1.0, 0.0, 0.3), hash(i));
-            vColor = mix(c1, c2, uChorusMode) + uAudioHigh * 0.4;
+            // 顏色過渡：冷轉熱
+            vec3 cNormal = mix(vec3(0.0, 0.4, 1.0), vec3(0.7, 0.1, 1.0), (finalPos.z + 4.0)/8.0);
+            vec3 cChorus = mix(vec3(1.0, 0.8, 0.1), vec3(1.0, 0.1, 0.2), hash(i));
+            vColor = mix(cNormal, cChorus, uChorusMode);
+            vColor += uAudioHigh * mix(0.3, 0.8, uChorusMode);
         }
     </script>
 
@@ -87,16 +96,16 @@
         varying vec3 vColor;
         void main() {
             float dist = length(gl_PointCoord - vec2(0.5));
-            float strength = exp(-dist * 12.0); // 更銳利的點
+            float strength = exp(-dist * 12.0); 
             if (dist > 0.5) discard;
-            gl_FragColor = vec4(vColor, strength * 0.8);
+            gl_FragColor = vec4(vColor, strength * 0.85);
         }
     </script>
 
     <script>
         let scene, camera, renderer, particles;
         let audioAnalyser, dataArray;
-        const handPos = new THREE.Vector3(100, 100, 100);
+        const handPos = new THREE.Vector3(200, 200, 200); 
         
         let morphTarget = 0, currentMorph = 0;
         let chorusTarget = 0, currentChorus = 0;
@@ -105,18 +114,18 @@
         async function init() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 22;
+            camera.position.z = 25;
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
             const count = 50000;
             const geometry = new THREE.BufferGeometry();
             const indices = new Float32Array(count);
             const sizes = new Float32Array(count);
-            for(let i=0; i<count; i++) { indices[i]=i; sizes[i]=Math.random()*1.0+0.5; }
+            for(let i=0; i<count; i++) { indices[i]=i; sizes[i]=Math.random()*1.0+0.4; }
             geometry.setAttribute('aIndex', new THREE.BufferAttribute(indices, 1));
             geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
             geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count*3), 3));
@@ -129,14 +138,14 @@
                 vertexShader: document.getElementById('vertexShader').textContent,
                 fragmentShader: document.getElementById('fragmentShader').textContent,
                 transparent: true, blending: THREE.AdditiveBlending, 
-                depthWrite: false, depthTest: false // 修復「斷裂感」的關鍵：關閉深度測試
+                depthWrite: false, depthTest: false 
             });
 
             particles = new THREE.Points(geometry, material);
             scene.add(particles);
 
             const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6 });
             hands.onResults(onHandResults);
 
             const videoElement = document.createElement('video');
@@ -155,54 +164,57 @@
                 const lm = results.multiHandLandmarks[0];
                 const palm = lm[9];
                 const currentX = palm.x;
-                handPos.x = (currentX - 0.5) * -35;
-                handPos.y = (0.5 - palm.y) * 25;
+                handPos.x = (currentX - 0.5) * -40;
+                handPos.y = (0.5 - palm.y) * 30;
 
-                // 比 1 向左揮偵測
-                const isFingerOne = lm[8].y < lm[6].y && lm[12].y > lm[10].y;
+                // 改進的手勢辨識：比 1 並快速向左揮
+                const isFingerOne = lm[8].y < lm[6].y && lm[12].y > lm[10].y && lm[16].y > lm[14].y;
                 if (isFingerOne && !gestureCooldown && lastHandX - currentX > 0.12) { 
                     morphTarget = 1 - morphTarget;
                     gestureCooldown = true;
                     document.getElementById('current-mode').innerText = morphTarget === 1 ? "螺旋球體" : "莫比烏斯環";
-                    setTimeout(() => { gestureCooldown = false; }, 1200);
+                    setTimeout(() => { gestureCooldown = false; }, 1000);
                 }
                 lastHandX = currentX;
+            } else {
+                handPos.lerp(new THREE.Vector3(200,200,200), 0.05);
             }
         }
 
         async function initAudio() {
             if (audioAnalyser) return;
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const source = audioCtx.createMediaStreamSource(stream);
-            audioAnalyser = audioCtx.createAnalyser();
-            audioAnalyser.fftSize = 512; // 增加解析度以精確偵測
-            source.connect(audioAnalyser);
-            dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
-            document.getElementById('status').innerText = '音訊監聽中...';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioCtx.createMediaStreamSource(stream);
+                audioAnalyser = audioCtx.createAnalyser();
+                audioAnalyser.fftSize = 512; 
+                source.connect(audioAnalyser);
+                dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+                document.getElementById('status').innerText = '音訊監聽中...';
+            } catch (e) { alert("請允許麥克風權限"); }
         }
 
         function animate() {
             requestAnimationFrame(animate);
             const time = performance.now() * 0.001;
             particles.material.uniforms.uTime.value = time;
-            currentMorph += (morphTarget - currentMorph) * 0.05;
+            currentMorph += (morphTarget - currentMorph) * 0.06;
             particles.material.uniforms.uMorph.value = currentMorph;
 
             if (audioAnalyser) {
                 audioAnalyser.getByteFrequencyData(dataArray);
                 
-                // --- 重構：副歌偵測邏輯 ---
-                // 只取前 40% 的頻段 (Bass & Mid Range)，這才是能量所在
-                let energySum = 0;
-                let sampleCount = Math.floor(dataArray.length * 0.4); 
-                for(let i=0; i < sampleCount; i++) { energySum += dataArray[i]; }
+                // --- 靈敏版副歌偵測 ---
+                // 只偵測低頻段 (前 15 個頻譜點)，這部分受低音鼓(Bass)影響最大
+                let bassEnergy = 0;
+                for(let i=0; i < 15; i++) { bassEnergy += dataArray[i]; }
+                const normalizedBass = (bassEnergy / 15) / 255.0;
                 
-                const normalizedEnergy = (energySum / sampleCount) / 255.0;
-                document.getElementById('energy-level').innerText = (normalizedEnergy * 100).toFixed(0) + "%";
+                document.getElementById('energy-level').innerText = (normalizedBass * 100).toFixed(0) + "%";
 
-                // 將門檻降至 0.4 (40%)，這在大部分流行歌的副歌都能觸發
-                if (normalizedEnergy > 0.40) {
+                // 將門檻降至非常靈敏的 0.20
+                if (normalizedBass > 0.20) {
                     chorusTarget = 1.0;
                     document.getElementById('chorus-active').style.display = "block";
                 } else {
@@ -210,10 +222,10 @@
                     document.getElementById('chorus-active').style.display = "none";
                 }
 
-                currentChorus += (chorusTarget - currentChorus) * 0.08;
+                currentChorus += (chorusTarget - currentChorus) * 0.1;
                 particles.material.uniforms.uChorusMode.value = currentChorus;
-                // 提高感官震動的靈敏度
-                particles.material.uniforms.uAudioHigh.value = (dataArray[12] / 255.0) * 1.2;
+                // 提高高頻閃爍的反應速度
+                particles.material.uniforms.uAudioHigh.value = (dataArray[25] / 255.0) * 1.5;
             }
 
             particles.rotation.y = time * 0.05;
